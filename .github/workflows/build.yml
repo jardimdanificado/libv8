@@ -125,6 +125,7 @@ jobs:
             v8_enable_gdbjit=false
             v8_enable_webassembly=true
             v8_enable_sandbox=false
+            symbol_level=0
           '
 
       - name: Build v8_monolith
@@ -146,6 +147,7 @@ jobs:
             cp v8/out/${{ matrix.target_os }}-${{ matrix.target_cpu }}/obj/v8_monolith.lib dist/ || true
           else
             cp v8/out/${{ matrix.target_os }}-${{ matrix.target_cpu }}/obj/libv8_monolith.a dist/ || true
+            strip -S dist/libv8_monolith.a 2>/dev/null || strip --strip-debug dist/libv8_monolith.a 2>/dev/null || true
           fi
 
       - name: Upload artifact
