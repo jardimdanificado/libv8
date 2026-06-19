@@ -1,0 +1,93 @@
+name: Build Wagnostic Libraries
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      wasmtime_version:
+        description: "Wasmtime C API version"
+        required: true
+        default: "30.0.1"
+      sdl_version:
+        description: "SDL2 version"
+        required: true
+        default: "2.30.9"
+
+jobs:
+  build:
+    name: "${{ matrix.platform }}"
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-x86_64
+            os: ubuntu-22.04
+          - platform: linux-i686
+            os: ubuntu-22.04
+          - platform: linux-aarch64
+            os: ubuntu-22.04
+          - platform: linux-armv7
+            os: ubuntu-22.04
+          - platform: macos-x86_64
+            os: macos-13
+          - platform: macos-arm64
+            os: macos-14
+          - platform: windows-x86_64
+            os: windows-2022
+          - platform: windows-i686
+            os: windows-2022
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        shell: bash
+        run: |
+          case "${{ matrix.platform }}" in
+            linux-*) sudo apt-get update -qq && sudo apt-get install -y -qq zip curl ca-certificates ;;
+            macos-*) brew install zip curl ca-certificates 2>/dev/null || true ;;
+            windows-*) choco install zip 2>/dev/null || true ;;
+          esac
+
+      - name: Build libraries
+        shell: bash
+        run: |
+          chmod +x build-libs/build.sh
+          mkdir -p build-output
+          ./build-libs/build.sh "${{ matrix.platform }}" build-output
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wagnostic-libs-${{ matrix.platform }}
+          path: build-output/wagnostic-libs-${{ matrix.platform }}.zip
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.event_name == 'release' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.zip
+
+      - name: Summary
+        run: |
+          echo "## Build Results" >> $GITHUB_STEP_SUMMARY
+          echo "| Platform | Size |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          for f in artifacts/*/wagnostic-libs-*.zip; do
+            name=$(basename "$f" .zip | sed 's/wagnostic-libs-//')
+            size=$(du -h "$f" | cut -f1)
+            echo "| $name | $size |" >> $GITHUB_STEP_SUMMARY
+          done
