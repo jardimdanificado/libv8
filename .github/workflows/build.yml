@@ -8,7 +8,7 @@ on:
       - '.github/workflows/build-v8.yml'
 
 env:
-  V8_REF: 15,1.154
+  V8_REF: 15.1.154
   DEPOT_TOOLS_WIN_TOOLCHAIN: "0"
   BUILD_CACHE_VERSION: "2"
 
