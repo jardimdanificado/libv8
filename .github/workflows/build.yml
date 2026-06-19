@@ -8,40 +8,25 @@ on:
       - '.github/workflows/build-v8.yml'
 
 env:
-  V8_REF: main  # troque para a tag/branch específica que você quer fixar
+  V8_REF: 15.1.154
 
 jobs:
   build-v8:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            target_os: linux
-            target_cpu: x64
-          - os: ubuntu-latest
-            target_os: linux
-            target_cpu: x86
-          - os: ubuntu-latest
-            target_os: linux
-            target_cpu: arm
-          - os: ubuntu-latest
-            target_os: linux
-            target_cpu: arm64
-          - os: windows-latest
-            target_os: win
-            target_cpu: x64
-          - os: windows-latest
-            target_os: win
-            target_cpu: x86
-          - os: macos-15-intel
-            target_os: mac
-            target_cpu: x64
-          - os: macos-latest
-            target_os: mac
-            target_cpu: arm64
+        flavor: [full, stripped, debug]
+        combo:
+          - { os: ubuntu-latest,     target_os: linux, target_cpu: x64 }
+          - { os: ubuntu-latest,     target_os: linux, target_cpu: x86 }
+          - { os: ubuntu-latest,     target_os: linux, target_cpu: arm }
+          - { os: ubuntu-latest,     target_os: linux, target_cpu: arm64 }
+          - { os: windows-latest,    target_os: win,   target_cpu: x64 }
+          - { os: windows-latest,    target_os: win,   target_cpu: x86 }
+          - { os: macos-15-intel,    target_os: mac,   target_cpu: x64 }
+          - { os: macos-latest,      target_os: mac,   target_cpu: arm64 }
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ matrix.combo.os }}
 
     steps:
       - name: Disable Git autocrlf (evita corromper o .digests do depot_tools no Windows)
@@ -93,16 +78,16 @@ jobs:
         uses: actions/cache@v4
         id: v8-build-cache
         with:
-          path: ${{ steps.workdir.outputs.dir }}/v8/out/${{ matrix.target_os }}-${{ matrix.target_cpu }}
-          key: v8-build-${{ runner.os }}-${{ env.V8_REF }}-${{ matrix.target_os }}-${{ matrix.target_cpu }}
+          path: ${{ steps.workdir.outputs.dir }}/v8/out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}
+          key: v8-build-${{ runner.os }}-${{ env.V8_REF }}-${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}
 
       - name: Install Linux cross sysroot
-        if: matrix.target_os == 'linux' && steps.v8-build-cache.outputs.cache-hit != 'true'
+        if: matrix.combo.target_os == 'linux' && steps.v8-build-cache.outputs.cache-hit != 'true'
         run: |
           cd "${{ steps.workdir.outputs.dir }}"
           export PATH="$PWD/depot_tools:$PATH"
           cd v8
-          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=${{ matrix.target_cpu }}
+          python3 build/linux/sysroot_scripts/install-sysroot.py --arch=${{ matrix.combo.target_cpu }}
 
       - name: Generate build files
         if: steps.v8-build-cache.outputs.cache-hit != 'true'
@@ -111,22 +96,58 @@ jobs:
           cd "${{ steps.workdir.outputs.dir }}"
           export PATH="$PWD/depot_tools:$PATH"
           cd v8
-          gn gen out/${{ matrix.target_os }}-${{ matrix.target_cpu }} --args='
-            target_os="${{ matrix.target_os }}"
-            target_cpu="${{ matrix.target_cpu }}"
-            is_debug=false
+
+          # Args comuns a todas as variantes (flavors)
+          BASE_ARGS='
+            target_os="${{ matrix.combo.target_os }}"
+            target_cpu="${{ matrix.combo.target_cpu }}"
             v8_monolithic=true
             v8_static_library=true
             is_component_build=false
             v8_use_external_startup_data=false
-            v8_enable_i18n_support=false
-            v8_enable_inspector=false
-            v8_enable_disassembler=false
-            v8_enable_gdbjit=false
             v8_enable_webassembly=true
             v8_enable_sandbox=false
-            symbol_level=0
           '
+
+          case "${{ matrix.flavor }}" in
+            full)
+              # V8 "padrão": todos os recursos habilitados (i18n, inspector,
+              # disassembler, gdbjit), release otimizado, sem debug info.
+              FLAVOR_ARGS='
+                is_debug=false
+                v8_enable_i18n_support=true
+                v8_enable_inspector=true
+                v8_enable_disassembler=true
+                v8_enable_gdbjit=true
+              '
+              ;;
+            stripped)
+              # Build mínima: só o necessário pra rodar Wasm, sem recursos
+              # de debugging/i18n, sem debug info -> binário bem menor.
+              FLAVOR_ARGS='
+                is_debug=false
+                v8_enable_i18n_support=false
+                v8_enable_inspector=false
+                v8_enable_disassembler=false
+                v8_enable_gdbjit=false
+                symbol_level=0
+              '
+              ;;
+            debug)
+              # Build de debug completa: todos os recursos + símbolos cheios.
+              FLAVOR_ARGS='
+                is_debug=true
+                v8_enable_i18n_support=true
+                v8_enable_inspector=true
+                v8_enable_disassembler=true
+                v8_enable_gdbjit=true
+                symbol_level=2
+              '
+              ;;
+          esac
+
+          gn gen "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" \
+            --args="$BASE_ARGS $FLAVOR_ARGS"
 
       - name: Build v8_monolith
         if: steps.v8-build-cache.outputs.cache-hit != 'true'
@@ -135,24 +156,28 @@ jobs:
           cd "${{ steps.workdir.outputs.dir }}"
           export PATH="$PWD/depot_tools:$PATH"
           cd v8
-          ninja -C out/${{ matrix.target_os }}-${{ matrix.target_cpu }} v8_monolith
+          ninja -C "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" v8_monolith
 
       - name: Package artifact
         shell: bash
         run: |
           cd "${{ steps.workdir.outputs.dir }}"
+          OUT_DIR="v8/out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}"
           mkdir -p dist/include
           cp -r v8/include/* dist/include/
-          if [ "${{ matrix.target_os }}" = "win" ]; then
-            cp v8/out/${{ matrix.target_os }}-${{ matrix.target_cpu }}/obj/v8_monolith.lib dist/ || true
+          if [ "${{ matrix.combo.target_os }}" = "win" ]; then
+            cp "$OUT_DIR/obj/v8_monolith.lib" dist/ || true
           else
-            cp v8/out/${{ matrix.target_os }}-${{ matrix.target_cpu }}/obj/libv8_monolith.a dist/ || true
-            strip -S dist/libv8_monolith.a 2>/dev/null || strip --strip-debug dist/libv8_monolith.a 2>/dev/null || true
+            cp "$OUT_DIR/obj/libv8_monolith.a" dist/ || true
+            # Só remove símbolos de debug nas variantes que não são "debug"
+            if [ "${{ matrix.flavor }}" != "debug" ]; then
+              strip -S dist/libv8_monolith.a 2>/dev/null || strip --strip-debug dist/libv8_monolith.a 2>/dev/null || true
+            fi
           fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: v8-${{ matrix.target_os }}-${{ matrix.target_cpu }}
+          name: v8-${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}
           path: ${{ steps.workdir.outputs.dir }}/dist/
           retention-days: 30
