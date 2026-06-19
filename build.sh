@@ -111,7 +111,7 @@ rm -rf "$WORKDIR" "$DISTDIR"
 mkdir -p "$WORKDIR" "$DISTDIR"/{wasmtime/{include,lib},v8/{include,lib},sdl2/{include,lib},wasm3/{include,lib}}
 
 # ============================================================
-# 1. Wasm3 — build from upstream source
+# 1. Wasm3 — build from upstream source (manual compile)
 # ============================================================
 echo "[1/4] Building wasm3 v$WASM3_VERSION..."
 WASM3_REPO="$WORKDIR/wasm3-source"
@@ -120,23 +120,37 @@ if [ ! -d "$WASM3_REPO" ]; then
         https://github.com/wasm3/wasm3.git "$WASM3_REPO" 2>&1 | tail -1
 fi
 
-# wasm3 uses a simple CMakeLists.txt; we just need the static lib + headers
+# Compile wasm3 manually (no cmake needed)
 WASM3_BUILD="$WORKDIR/wasm3-build"
 mkdir -p "$WASM3_BUILD"
-cmake -S "$WASM3_REPO" -B "$WASM3_BUILD" \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DBUILD_SHARED_LIBS=OFF \
-    -DCMAKE_C_COMPILER="$BUILD_CC" \
-    -DWASM3_BUILD_WASI=OFF 2>&1 | tail -2
 
-cmake --build "$WASM3_BUILD" -- -j$(nproc) 2>&1 | tail -2
+# Compile all wasm3 source files
+WASM3_SRCS=(
+    m3_api_libc.c
+    m3_bind.c
+    m3_code.c
+    m3_compile.c
+    m3_core.c
+    m3_env.c
+    m3_exec.c
+    m3_function.c
+    m3_info.c
+    m3_module.c
+    m3_parse.c
+)
+
+cd "$WASM3_BUILD"
+for src in "${WASM3_SRCS[@]}"; do
+    $BUILD_CC -c -O2 -I"$WASM3_REPO/source" "$WASM3_REPO/source/$src" -o "${src%.c}.o" 2>&1 | grep -v "^$" || true
+done
+
+# Create static library
+ar rcs libwasm3.a *.o 2>&1 | tail -1
 
 # Copy artifacts
 cp "$WASM3_REPO/source/"*.h "$DISTDIR/wasm3/include/"
 cp "$WASM3_REPO/source/m3_config.h" "$DISTDIR/wasm3/include/" 2>/dev/null || true
-find "$WASM3_BUILD" -name "libwasm3.a" -o -name "libwasm3-static.a" | head -1 | while read f; do
-    cp "$f" "$DISTDIR/wasm3/lib/"
-done
+cp libwasm3.a "$DISTDIR/wasm3/lib/"
 echo "  ✓ wasm3 $(ls "$DISTDIR/wasm3/lib/" 2>/dev/null)"
 
 # ============================================================
