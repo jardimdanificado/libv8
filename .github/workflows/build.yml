@@ -34,7 +34,7 @@ jobs:
           - os: windows-latest
             target_os: win
             target_cpu: x86
-          - os: macos-13
+          - os: macos-15-intel
             target_os: mac
             target_cpu: x64
           - os: macos-latest
