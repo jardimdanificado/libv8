@@ -109,13 +109,12 @@ jobs:
           BASE_ARGS='
             target_os="${{ matrix.combo.target_os }}"
             target_cpu="${{ matrix.combo.target_cpu }}"
-            v8_monolithic=true
-            v8_static_library=true
-            is_component_build=false
+            v8_monolithic=false
+            is_component_build=true
             v8_use_external_startup_data=false
             v8_enable_webassembly=true
             v8_enable_sandbox=false
-            use_thin_archives=false
+            use_custom_libcxx=true
           '
 
           case "${{ matrix.flavor }}" in
@@ -153,14 +152,14 @@ jobs:
           gn gen "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" \
             --args="$BASE_ARGS $FLAVOR_ARGS"
 
-      - name: "[unix] Build v8_monolith"
+      - name: "[unix] Build v8 shared"
         if: runner.os != 'Windows' && steps.v8-build-cache.outputs.cache-hit != 'true'
         shell: bash
         run: |
           cd "${{ steps.workdir.outputs.dir }}"
           export PATH="$PWD/depot_tools:$PATH"
           cd v8
-          ninja -C "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" v8_monolith
+          ninja -C "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" v8
 
       - name: "[unix] Package artifact"
         if: runner.os != 'Windows'
@@ -168,11 +167,14 @@ jobs:
         run: |
           cd "${{ steps.workdir.outputs.dir }}"
           OUT_DIR="v8/out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}"
-          mkdir -p dist/include
+          mkdir -p dist/include dist/lib
           cp -r v8/include/* dist/include/
-          cp "$OUT_DIR/obj/libv8_monolith.a" dist/ || true
+          # Copy all .so files
+          find "$OUT_DIR" -name "*.so" -exec cp {} dist/lib/ \;
           if [ "${{ matrix.flavor }}" != "debug" ]; then
-            strip -S dist/libv8_monolith.a 2>/dev/null || strip --strip-debug dist/libv8_monolith.a 2>/dev/null || true
+            for f in dist/lib/*.so; do
+              strip --strip-debug "$f" 2>/dev/null || true
+            done
           fi
 
       # ---------------------------------------------------------------
@@ -204,13 +206,12 @@ jobs:
           $BaseArgs = @(
             'target_os="${{ matrix.combo.target_os }}"',
             'target_cpu="${{ matrix.combo.target_cpu }}"',
-            'v8_monolithic=true',
-            'v8_static_library=true',
-            'is_component_build=false',
+            'v8_monolithic=false',
+            'is_component_build=true',
             'v8_use_external_startup_data=false',
             'v8_enable_webassembly=true',
             'v8_enable_sandbox=false',
-            'use_thin_archives=false'
+            'use_custom_libcxx=true'
           )
 
           switch ("${{ matrix.flavor }}") {
@@ -229,14 +230,14 @@ jobs:
 
           gn gen $OutDir
 
-      - name: "[win] Build v8_monolith"
+      - name: "[win] Build v8 shared"
         if: runner.os == 'Windows' && steps.v8-build-cache.outputs.cache-hit != 'true'
         shell: powershell
         run: |
           Set-Location "${{ steps.workdir.outputs.dir }}"
           $env:PATH = "$PWD\depot_tools;$env:PATH"
           Set-Location v8
-          ninja -C "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" v8_monolith
+          ninja -C "out/${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}" v8
 
       - name: "[win] Package artifact"
         if: runner.os == 'Windows'
@@ -245,8 +246,10 @@ jobs:
           Set-Location "${{ steps.workdir.outputs.dir }}"
           $OutDir = "v8\out\${{ matrix.combo.target_os }}-${{ matrix.combo.target_cpu }}-${{ matrix.flavor }}"
           New-Item -ItemType Directory -Force -Path dist\include | Out-Null
+          New-Item -ItemType Directory -Force -Path dist\lib | Out-Null
           Copy-Item -Recurse -Force v8\include\* dist\include\
-          Copy-Item -Force "$OutDir\obj\v8_monolith.lib" dist\ -ErrorAction SilentlyContinue
+          # Copy all .dll and .lib files
+          Get-ChildItem -Path $OutDir -Recurse -Include "*.dll","*.lib" | Copy-Item -Destination dist\lib\
 
       # ---------------------------------------------------------------
       - name: Upload artifact
