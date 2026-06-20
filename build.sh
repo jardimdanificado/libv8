@@ -213,9 +213,12 @@ build_v8() {
         target_os=\"$V8_OS\"
         v8_monolithic=true
         v8_use_external_startup_data=false
-        use_custom_libcxx=false
+        use_custom_libcxx=true
         treat_warnings_as_errors=false
         use_sysroot=false
+        is_component_build=false
+        symbol_level=0
+        strip_debug_info=true
     " 2>&1 | tail -2
 
     ninja -C "out/Release" v8_monolith 2>&1 | tail -3
